@@ -1,0 +1,29 @@
+This annotates the pQTL through VEP for the most severe consequence.
+
+LDproxy.py
+First, the LDproxy API is used to extract all SNPs within LD of the target pQTL.
+Parameters used:
+        'pop': 'CEU+TSI+GBR+IBS',
+        'r2_d': 'r2',
+        'window': '100000',
+        'genome_build': 'grch37',
+
+The following SNPs encountered problems and were skipped by the script:
+rs28895246 
+9:140008750_G_C
+rs77553517
+rs2961544
+rs78967641
+rs9501393
+
+LDproxyExtract.py
+Then, all unique rsid were extracted from LDproxy.py output to LDproxyRSID.txt.
+
+VEPannotate.txt
+Then, all of the rsids were used as input for the ensembl VEP. http://grch37.ensembl.org/Homo_sapiens/Tools/VEP?db=core
+Settings used:
+Co-located known variants - No
+Restrict results - Show most severe consequence per variant
+
+LDproxyMerge.py
+Finally, the script merges the two databases for supplementary1.py to easily extract the worst consequence within LD
