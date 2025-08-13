@@ -1,11 +1,15 @@
 import fitz  # PyMuPDF
-from PIL import Image, ImageFont, ImageDraw
+from PIL import Image, ImageFont, ImageDraw, ImageChops
 import os
 
-outputDir = '/gpfs/igmmfs01/eddie/wilson-lab/projects/prj_190_viking_somalogic/Scripts/Publication/supportingFiles/replication/locusZoom/output'
+# --- Define Project Root ---
+projectRoot = './prj_190_viking_somalogic'
+
+# --- Define Output Directory ---
+outputDir = os.path.join(projectRoot, 'Scripts/Publication/supportingFiles/replication/locusZoom/output')
 
 # Predefined gene names of interest
-gene_names = ['LTK', 'B3GAT1', 'NIF3L1', 'NTAQ1', 'AAMDC', 'BCL7A', 'COMMD10', 'PROCR']  # Add more gene names here as needed
+gene_names = ['AAMDC', 'PROCR', 'LTK', 'B3GAT1', 'BCL7A', 'COMMD10', 'NIF3L1', 'NTAQ1']  # Add more gene names here as needed
 
 # Category mapping dictionary
 categoryDict = {
@@ -269,85 +273,64 @@ def stack_subgroup_images(subgroups, placeholder_width):
     return subgroup_stacked_images
 
 def stack_images_vertically(image_dict, output_file, separator_thickness=30):
-    """Stack images vertically with labels on the left for base subcategories and gene labels at the top, and position the legend at the bottom of the first column."""
     columns = []
 
     for gene in gene_names:
         gene_images = []
 
-        # First, determine placeholder dimensions
         placeholder_width, placeholder_height = get_placeholder_dimensions(image_dict, gene)
 
-        # Process base subcategory images
         base_images = process_base_images(image_dict, gene, placeholder_width, placeholder_height)
         if base_images:
-            stacked_base_image = Image.new('RGB', (base_images[0].width, sum(img.height for img in base_images)), (0, 0, 0))  # Set background to black
+            stacked_base_image = create_hatched_background(
+                base_images[0].width,
+                sum(img.height for img in base_images)
+            )
             y_offset = 0
             for img in base_images:
                 stacked_base_image.paste(img, (0, y_offset))
                 y_offset += img.height
             gene_images.append(stacked_base_image)
 
-        # Process discovery and replication subgroups
         subgroups = process_subgroups(gene, image_dict)
         subgroup_images = stack_subgroup_images(subgroups, placeholder_width)
         gene_images.extend(subgroup_images)
 
-        # Add separator and stack all gene images
         if gene_images:
-            # Create a label image with the gene name and add it to the top of the column
-            gene_label_image = create_label_image(gene, placeholder_width, 100)  # Label height is 100
-            gene_images.insert(0, gene_label_image)  # Insert at the beginning of the gene images list
+            gene_label_image = create_label_image(gene, placeholder_width, 100)
+            gene_images.insert(0, gene_label_image)
 
             gene_column = stack_gene_images_with_separator(gene_images, separator_thickness)
             columns.append(gene_column)
 
-    # Find the height of the tallest column
-    tallest_column_height = max(col.height for col in columns)
+    if not columns:
+        raise RuntimeError("No columns generated")
 
-    # Create the legend image
-    legend_image = create_legend_image(width=placeholder_width, height=placeholder_height)
+    # Using the placeholder dimensions as a guide
+    legend_w = int(placeholder_width * 1)
+    legend_h = int(placeholder_height * 1)
+    legend_image = create_legend_image(width=legend_w, height=legend_h)
 
-    # Now we will paste the legend at the bottom of the first column
-    if columns:
-        first_column = columns[0]  # Get the first column image
-        # Calculate how much empty space we need to add above the legend to match the height of the tallest column
-        empty_space_height = tallest_column_height - first_column.height - legend_image.height
+    # Make the legend the last frame of the last column (bottom-right of canvas)
+    columns = append_legend_to_last_column(columns, legend_image, separator_thickness)
 
-        # If there's any empty space needed, create a black image with that height
-        if empty_space_height > 0:
-            empty_space = Image.new('RGB', (first_column.width, empty_space_height), (0, 0, 0))  # Black background
-        else:
-            empty_space = None
-
-        combined_height = first_column.height + (empty_space_height if empty_space else 0) + legend_image.height
-
-        # Create a new image that can fit the first column, empty space, and the legend
-        new_first_column = Image.new('RGB', (first_column.width, combined_height), (0, 0, 0))  # Black background
-
-        # Paste the original first column image (no transparency needed here)
-        new_first_column.paste(first_column, (0, 0))  # Paste the first column at the top
-        y_offset = first_column.height
-
-        # If empty space is needed, paste the black empty space
-        if empty_space:
-            new_first_column.paste(empty_space, (0, y_offset))  # Add the black empty space
-            y_offset += empty_space_height
-
-        # Paste the legend (no mask needed since it's not transparent)
-        new_first_column.paste(legend_image, (0, y_offset))  # Paste the legend at the bottom
-
-        # Replace the first column with the new one that includes the legend
-        columns[0] = new_first_column
-
-    # Create the vertical label image
+    # Build the left-side labels after we know placeholder_height
     base_labels = base_subcategories
     label_image = create_vertical_label_image(base_labels, width=200, height_per_label=placeholder_height)
 
-    # Stack columns and labels into the final image
+    # Stack columns + labels into the final image
     final_image = stack_columns_with_labels(label_image, columns)
 
-    # Save the final image
+    final_image = add_global_diagonal_watermark(
+        final_image,
+        label_width=label_image.width,
+        label_height=label_image.height,
+        columns=columns,
+        text="Empty space\n(no measurements)",
+        angle=35,
+        opacity=80
+    )
+
     final_image.save(output_file)
     print(f"Image saved to {output_file}")
 
@@ -360,13 +343,21 @@ def get_placeholder_dimensions(image_dict, gene):
             return img.width, img.height
     return 500, 500  # Default size if no image is found
 
+def create_hatched_background(width, height, bg_color=(220, 220, 220), line_color=(200, 200, 200), spacing=20):
+    img = Image.new('RGB', (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+    for x in range(-height, width, spacing):
+        draw.line((x, 0, x + height, height), fill=line_color)
+    return img
+
 def stack_gene_images_with_separator(gene_images, separator_thickness):
+
     """Stack gene images with separators."""
     width = gene_images[0].width
-    separator = Image.new('RGB', (width, separator_thickness), (0, 0, 0))  # Black separator
+    separator = create_hatched_background(width, separator_thickness)  # Light grey hatched separator
 
     total_height = sum(img.height for img in gene_images) + separator_thickness * (len(gene_images) - 1)
-    stacked_gene_image = Image.new('RGB', (width, total_height))
+    stacked_gene_image = create_hatched_background(width, total_height)
     
     y_offset = 0
     for i, img in enumerate(gene_images):
@@ -379,34 +370,26 @@ def stack_gene_images_with_separator(gene_images, separator_thickness):
     return stacked_gene_image
 
 def stack_columns_with_labels(label_image, columns):
-    """Stack the vertical label image and gene columns into the final image and include the legend."""
-    # Create the legend image
-    legend_image = create_legend_image(width=400, height=150)
-
-    # Adjust the total width and height to include the legend
     total_width = sum(col.width for col in columns) + label_image.width
     max_height = max(col.height for col in columns)
-    total_height = max(max_height, label_image.height + legend_image.height)  # Include space for the legend
+    total_height = max(max_height, label_image.height)
 
-    final_image = Image.new('RGB', (total_width, total_height))
+    final_image = create_hatched_background(total_width, total_height)
 
     # Paste label image on the left
     final_image.paste(label_image, (0, 0))
 
-    # Paste gene columns to the right of the label image
+    # Paste columns to the right of labels
     x_offset = label_image.width
     for col in columns:
         final_image.paste(col, (x_offset, 0))
         x_offset += col.width
 
-    # Paste the legend image in the bottom left corner
-    final_image.paste(legend_image, (0, max_height))
-
     return final_image
 
 def create_placeholder_image(width, height, text="Not measured"):
     """Create an image with a 'Not measured' label when an image is missing."""
-    placeholder_img = Image.new('RGB', (width, height), (255, 255, 255))  # White background
+    placeholder_img = create_hatched_background(width, height)
     draw = ImageDraw.Draw(placeholder_img)
 
     try:
@@ -472,7 +455,113 @@ def create_legend_image(width=400, height=150, bg_color=(255, 255, 255)):
 
     return legend_img
 
+def append_legend_to_last_column(columns, legend_image, separator_thickness):
+    """
+    Make the legend the last 'frame' of the last column.
+    Pad the last column so the legend sits at the canvas bottom,
+    and right-align the legend within the column.
+    """
+    if not columns:
+        return columns
 
+    last_col = columns[-1]
+    tallest = max(c.height for c in columns)
+
+    needed_height = tallest - last_col.height - separator_thickness - legend_image.height
+    spacer_h = max(0, needed_height)
+
+    new_h = last_col.height + spacer_h + separator_thickness + legend_image.height
+    new_w = last_col.width
+
+    # Use HATCHED background for the rebuilt last column
+    new_last = create_hatched_background(new_w, new_h)
+    y = 0
+    new_last.paste(last_col, (0, y)); y += last_col.height
+
+    if spacer_h > 0:
+        # Use HATCHED spacer too
+        spacer = create_hatched_background(new_w, spacer_h)
+        new_last.paste(spacer, (0, y)); y += spacer_h
+
+    # Hatched separator already via helper
+    sep = create_hatched_background(new_w, separator_thickness)
+    new_last.paste(sep, (0, y)); y += separator_thickness
+
+    # right-align legend within the column
+    legend_x = new_w - legend_image.width
+    new_last.paste(legend_image, (legend_x, y))
+
+    columns[-1] = new_last
+    return columns
+
+def add_global_diagonal_watermark(final_image, label_width, label_height, columns, text,
+                                  angle=35, opacity=80):
+    """
+    Overlay one large diagonal watermark across *only* the empty grey/hatched
+    areas (all bottom rows under shorter columns and under the label panel).
+    - final_image: PIL.Image (RGB)
+    - label_width/label_height: size of the left label area you pasted
+    - columns: list of column images in the order you pasted them
+    - text: watermark string
+    - angle: rotation in degrees
+    - opacity: 0..255 (per-pixel max opacity for watermark)
+    """
+    W, H = final_image.size
+    tallest = max(c.height for c in columns)
+
+    # 1) Build an L-mode mask marking "empty areas" as 255, else 0
+    empty_mask = Image.new('L', (W, H), 0)
+    mdraw = ImageDraw.Draw(empty_mask)
+
+    # Empty under the left label block
+    if label_height < tallest:
+        mdraw.rectangle([0, label_height, label_width, tallest], fill=255)
+
+    # Empty under each column
+    x = label_width
+    for col in columns:
+        if col.height < tallest:
+            mdraw.rectangle([x, col.height, x + col.width, tallest], fill=255)
+        x += col.width
+
+    # 2) Create a big text layer (same size as final image)
+    text_layer = Image.new('RGBA', (W, H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(text_layer)
+
+    # Choose a font size roughly proportional to diagonal length
+    diag = (W**2 + tallest**2) ** 0.5
+    target_size = max(14, int(diag * 0.04))
+    try:
+        font = ImageFont.truetype("DejaVuSans-Bold.ttf", target_size)
+    except IOError:
+        font = ImageFont.load_default()
+
+    # Draw text centered before rotation
+    tb = draw.textbbox((0, 0), text, font=font)
+    tw, th = tb[2] - tb[0], tb[3] - tb[1]
+    # Shift factors: fraction of available space from top-left
+    shift_x = 0.45  # 0.5 would be centered horizontally
+    shift_y = 0.65  # 0.5 would be centered vertically
+
+    cx = int(W * shift_x)
+    cy = int(tallest * shift_y)
+    tx = cx - tw // 2
+    ty = cy - th // 2
+    draw.text((tx, ty), text, font=font, fill=(0, 0, 0, opacity))
+
+    # Rotate around the canvas center without changing size
+    text_layer = text_layer.rotate(angle, expand=False, resample=Image.BICUBIC, center=(W/2, H/2))
+
+    # 3) Restrict watermark to the "empty areas" and keep its original glyph alpha
+    glyph_alpha = text_layer.split()[3]  # A channel of glyphs
+    # Scale the empty mask to (0..opacity) and multiply with glyph alpha
+    scaled_mask = empty_mask.point(lambda p: int(p * opacity / 255))
+    combined_alpha = ImageChops.multiply(glyph_alpha, scaled_mask)
+    text_layer.putalpha(combined_alpha)
+
+    # 4) Composite and return
+    out = Image.alpha_composite(final_image.convert('RGBA'), text_layer).convert('RGB')
+    return out
 
 
 
@@ -496,5 +585,5 @@ for pdf_file in fileNames:
                     image_dict[gene]['base'][subcategory] = img
 
 # Now process the discovery/replication & stack the images vertically per gene with a separator and save the final image
-output_image_file = '/gpfs/igmmfs01/eddie/wilson-lab/projects/prj_190_viking_somalogic/Scripts/Publication/supportingFiles/replication/locusZoom/stacked_image.png'
-stack_images_vertically(image_dict, output_image_file)
+outputImageFile = os.path.join(outputDir, 'stacked_images.png')
+stack_images_vertically(image_dict, outputImageFile)
