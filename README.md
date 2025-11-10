@@ -23,5 +23,5 @@ PLINK 1.90
 # Citation
 If using any of the code herein, please cite:
 
-Kuliesius, J. et al. Efficient candidate drug target discovery through proteogenomics in a Scottish cohort. 2025. doi: https://doi.org/10.1101/2024.01.29.24301808
+Kuliesius, J., Timmers, P.R.H.J., Navarro, P. et al. Efficient candidate drug target discovery through proteogenomics in a Scottish cohort. Commun Biol 8, 1300 (2025). https://doi.org/10.1038/s42003-025-08738-w
 
